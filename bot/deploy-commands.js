@@ -4,7 +4,17 @@ const { REST, Routes, SlashCommandBuilder } = require("discord.js");
 const commands = [
   new SlashCommandBuilder()
     .setName("ping")
-    .setDescription("Comprueba si el bot responde")
+    .setDescription("Comprueba si el bot responde"),
+
+  new SlashCommandBuilder()
+    .setName("play")
+    .setDescription("Reproduce música en un canal de voz")
+    .addStringOption(option =>
+      option
+        .setName("query")
+        .setDescription("Link o nombre de la canción")
+        .setRequired(true)
+    )
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
