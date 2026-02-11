@@ -1,5 +1,13 @@
 require("dotenv").config();
 const { Client, GatewayIntentBits } = require("discord.js");
+const {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  NoSubscriberBehavior,
+  getVoiceConnection
+} = require("@discordjs/voice");
+const play = require("play-dl");
 
 const client = new Client({
   intents: [
@@ -8,6 +16,19 @@ const client = new Client({
   ]
 });
 
+const players = new Map();
+
+function getOrCreatePlayer(guildId) {
+  if (players.has(guildId)) return players.get(guildId);
+
+  const player = createAudioPlayer({
+    behaviors: { noSubscriber: NoSubscriberBehavior.Pause }
+  });
+
+  players.set(guildId, player);
+  return player;
+}
+
 client.once("ready", () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
 });
@@ -15,27 +36,74 @@ client.once("ready", () => {
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  // /ping
   if (interaction.commandName === "ping") {
     return interaction.reply("🏓 Pong!");
   }
 
-  // /play (por ahora solo prueba)
-  if (interaction.commandName === "play") {
-    const query = interaction.options.getString("query");
+  if (interaction.commandName === "stop") {
+    const conn = getVoiceConnection(interaction.guildId);
+    if (conn) conn.destroy();
+    players.delete(interaction.guildId);
+    return interaction.reply("🛑 Detenido y desconectado.");
+  }
 
-    if (!interaction.member.voice.channel) {
+  if (interaction.commandName === "play") {
+    const query = interaction.options.getString("query", true);
+    const voiceChannel = interaction.member?.voice?.channel;
+
+    if (!voiceChannel) {
       return interaction.reply({
-        content: "❌ Debes estar en un canal de voz.",
+        content: "❌ Debes estar en un canal de voz para usar /play.",
         ephemeral: true
       });
     }
 
-    await interaction.reply(
-      `🎶 Comando /play recibido\n🔍 Búsqueda: **${query}**`
-    );
+    // Responde rápido para que Discord no marque "no respondió"
+    await interaction.reply(`🔎 Buscando: **${query}**`);
 
-    console.log("PLAY solicitado:", query);
+    // Resolver URL / búsqueda (YouTube)
+    let videoUrl;
+    try {
+      if (play.yt_validate(query) === "video") {
+        videoUrl = query;
+      } else {
+        const results = await play.search(query, { limit: 1 });
+        if (!results.length) {
+          return interaction.editReply("❌ No encontré resultados.");
+        }
+        videoUrl = results[0].url;
+      }
+    } catch (e) {
+      console.error(e);
+      return interaction.editReply("❌ Error buscando en YouTube.");
+    }
+
+    // Conectarse al canal
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: voiceChannel.guild.id,
+      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+      selfDeaf: true
+    });
+
+    const player = getOrCreatePlayer(voiceChannel.guild.id);
+    connection.subscribe(player);
+
+    // Stream y reproducir
+    try {
+      const stream = await play.stream(videoUrl, { quality: 2 });
+      const resource = createAudioResource(stream.stream, { inputType: stream.type });
+
+      player.play(resource);
+
+      const info = await play.video_basic_info(videoUrl);
+      const title = info.video_details?.title ?? "Canción";
+
+      return interaction.editReply(`▶️ Reproduciendo: **${title}**`);
+    } catch (e) {
+      console.error(e);
+      return interaction.editReply("❌ Error reproduciendo audio.");
+    }
   }
 });
 
