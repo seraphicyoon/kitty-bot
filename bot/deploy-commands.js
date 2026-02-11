@@ -14,7 +14,11 @@ const commands = [
         .setName("query")
         .setDescription("Link o nombre de la canción")
         .setRequired(true)
-    )
+    ),
+
+  new SlashCommandBuilder()
+    .setName("stop")
+    .setDescription("Detiene la música y desconecta el bot")
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
