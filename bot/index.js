@@ -40,12 +40,9 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (interaction.commandName === "stop") {
-      // Responde rápido para evitar timeout
       await interaction.reply("🛑 Deteniendo...");
-
       const conn = getVoiceConnection(interaction.guildId);
       if (conn) conn.destroy();
-
       players.delete(interaction.guildId);
       return interaction.editReply("🛑 Detenido y desconectado.");
     }
@@ -61,27 +58,29 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      // ✅ Esto evita "La aplicación no respondió"
       await interaction.deferReply();
 
-      // Resolver URL / búsqueda (YouTube)
-      let videoUrl;
-      try {
-        if (play.yt_validate(query) === "video") {
-          videoUrl = query;
-        } else {
-          const results = await play.search(query, { limit: 1 });
-          if (!results.length) {
-            return interaction.editReply("❌ No encontré resultados.");
-          }
-          videoUrl = results[0].url;
+      // 1) Resolver SIEMPRE a una URL válida
+      let videoUrl = null;
+
+      // Si es URL de youtube válida (video)
+      if (play.yt_validate(query) === "video") {
+        videoUrl = query;
+      } else {
+        // Buscar en YouTube (si query es texto o link raro)
+        const results = await play.search(query, { limit: 1, source: { youtube: "video" } });
+        if (!results || results.length === 0 || !results[0]?.url) {
+          return interaction.editReply("❌ No encontré resultados (prueba con otro nombre o link).");
         }
-      } catch (e) {
-        console.error(e);
-        return interaction.editReply("❌ Error buscando en YouTube.");
+        videoUrl = results[0].url;
       }
 
-      // Conectarse al canal
+      // Doble check para evitar undefined
+      if (!videoUrl || typeof videoUrl !== "string" || !videoUrl.startsWith("http")) {
+        return interaction.editReply("❌ No pude obtener una URL válida para reproducir.");
+      }
+
+      // 2) Conectarse al canal
       const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
         guildId: voiceChannel.guild.id,
@@ -92,44 +91,42 @@ client.on("interactionCreate", async (interaction) => {
       const player = getOrCreatePlayer(voiceChannel.guild.id);
       connection.subscribe(player);
 
-      // Stream y reproducir
+      // 3) Stream y reproducir
       try {
-        const stream = await play.stream(videoUrl, { quality: 2 });
-        const resource = createAudioResource(stream.stream, {
-          inputType: stream.type,
-        });
+        console.log("▶️ URL final a reproducir:", videoUrl);
 
+        const stream = await play.stream(videoUrl, { quality: 2 });
+        if (!stream?.stream) {
+          return interaction.editReply("❌ No pude abrir el stream de audio.");
+        }
+
+        const resource = createAudioResource(stream.stream, { inputType: stream.type });
         player.play(resource);
 
-        // Log útil para debugging
         player.once(AudioPlayerStatus.Playing, () => {
-          console.log(`▶️ Reproduciendo en ${voiceChannel.guild.id}: ${videoUrl}`);
+          console.log("✅ AudioPlayerStatus.Playing");
         });
 
         const info = await play.video_basic_info(videoUrl);
-        const title = info.video_details?.title ?? "Canción";
+        const title = info?.video_details?.title ?? "Canción";
 
         return interaction.editReply(`▶️ Reproduciendo: **${title}**`);
       } catch (e) {
-        console.error(e);
+        console.error("❌ Error reproduciendo:", e);
         return interaction.editReply("❌ Error reproduciendo audio.");
       }
     }
   } catch (err) {
-    console.error("Error en interactionCreate:", err);
-
-    // Intentar responder de forma segura
+    console.error("❌ Error en interactionCreate:", err);
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply("❌ Ocurrió un error inesperado.");
       } else {
-        await interaction.reply({
-          content: "❌ Ocurrió un error inesperado.",
-          ephemeral: true,
-        });
+        await interaction.reply({ content: "❌ Ocurrió un error inesperado.", ephemeral: true });
       }
     } catch {}
   }
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
